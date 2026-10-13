@@ -160,7 +160,8 @@ typedef struct clap_plugin_gui_xdg_activation_v1 {
 ///   parents from clap_embedded_surface_v1.get_parent_toplevel() and get_parent_surface()
 ///
 /// The parents are xdg-shell objects, so in C the plugin includes the header which
-/// wayland-scanner generates for xdg-shell before the one for clap_surface_embedding_v1.
+/// wayland-scanner generates for xdg-shell before the one for clap_surface_embedding_v1. CMake
+/// projects can generate the code with clap_wayland_experiment_target_protocols().
 ///
 /// Showing the GUI works as follows:
 ///  1. clap_plugin_gui->is_api_supported(plugin, api, false)
