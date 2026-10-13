@@ -4,7 +4,8 @@
 
 /// @page Wayland Experiment
 ///
-/// Two experimental extensions for floating plugin windows on Wayland.
+/// Experimental extensions for floating plugin windows on Wayland, and for the keyboard on X11
+/// and Wayland.
 ///
 /// Wayland can't embed a window from another connection, so with CLAP_WINDOW_API_WAYLAND the
 /// plugin's window is always floating. The plugin opens its own connection to the compositor and
@@ -14,14 +15,20 @@
 /// - each side can use any Wayland library and any toolkit
 /// - the plugin's GUI may run in another process
 ///
-/// Each extension carries one Wayland protocol, and is named after it, including its version:
+/// The extensions which carry a Wayland protocol are named after it, including its version:
 /// - clap_plugin_gui_xdg_foreign_v2 (xdg-foreign-unstable-v2) keeps the plugin's window above the
 ///   host's window
 /// - clap_plugin_gui_xdg_activation_v1 (xdg-activation-v1) lets the plugin's window take the focus
 ///
-/// A new version of a protocol would come with a new extension; a plugin may implement both. The
-/// compositor may offer only one of the protocols, and the host and the plugin may each support
-/// only one of the extensions: they are independent.
+/// A new version of a protocol would come with a new extension; a plugin may implement both.
+///
+/// clap_host_gui_xkb_key_forwarding lets the plugin forward to the host the keys which its
+/// window received but didn't consume, so that the host's shortcuts keep working, for example
+/// Space to start the playback. It works for X11 and Wayland, which both describe the keys with
+/// XKB.
+///
+/// The compositor may offer only some of the protocols, and the host and the plugin may each
+/// support only some of the extensions: they are independent.
 ///
 /// Showing the GUI works as follows:
 ///  1. clap_plugin_gui->is_api_supported(plugin, CLAP_WINDOW_API_WAYLAND, true)
@@ -34,7 +41,7 @@
 /// clap_plugin_gui->set_transient() isn't defined for CLAP_WINDOW_API_WAYLAND: the plugin
 /// returns false, and the host uses clap_plugin_gui_xdg_foreign_v2 instead.
 ///
-/// A host which is an X11 client, even under XWayland, can't use these extensions: it uses
+/// A host which is an X11 client, even under XWayland, can't use the xdg extensions: it uses
 /// CLAP_WINDOW_API_X11 instead. The window API given to clap_plugin_gui->create() and the
 /// host's window must belong to the same window system.
 
@@ -110,6 +117,76 @@ typedef struct clap_plugin_gui_xdg_activation_v1 {
    // [main-thread & floating]
    void(CLAP_ABI *set_activation_token)(const clap_plugin_t *plugin, const char *token);
 } clap_plugin_gui_xdg_activation_v1_t;
+
+////////////////////////
+// XKB key forwarding //
+////////////////////////
+
+static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XKB_KEY_FORWARDING[] = "clap.gui-xkb-key-forwarding/1";
+
+/// When the plugin's window has the keyboard focus, the window system sends the keys to the
+/// plugin only: on Wayland a client can't pass an input event to another client's window, and on
+/// X11 the plugin usually has its own connection to the server. The host would miss its own
+/// shortcuts, for example Space to start the playback.
+///
+/// So the plugin forwards to the host the keys which it doesn't consume, and only those:
+/// - a key which the plugin uses isn't forwarded, for example while one of its text fields is
+///   being edited, or when the key is one of the plugin's own shortcuts
+/// - a key which the plugin ignores is forwarded, and the host handles it as if it had received
+///   it itself
+///
+/// This is for CLAP_WINDOW_API_X11 and CLAP_WINDOW_API_WAYLAND, floating or embedded.
+///
+/// The host sees the keys in pairs:
+/// - the plugin forwards the repeats and the release of a key only if it forwarded its press
+/// - if the plugin loses the keyboard focus while a forwarded key is pressed, it forwards a
+///   release for it
+///
+/// The host must not send the forwarded keys back to the plugin, for example with XEmbed.
+
+// Same values as wl_keyboard.key_state
+enum clap_xkb_key_state {
+   CLAP_XKB_KEY_RELEASED = 0,
+   CLAP_XKB_KEY_PRESSED = 1,
+
+   // The key is still pressed. On Wayland, the clients make the repeats themselves from
+   // wl_keyboard.repeat_info, unless they bound wl_keyboard version 10 or later.
+   CLAP_XKB_KEY_REPEATED = 2,
+};
+
+// The effective modifiers, as xkb_state_mod_name_is_active() with XKB_STATE_MODS_EFFECTIVE.
+// The lock modifiers aren't there: the keysym already reflects them.
+enum clap_xkb_modifier {
+   CLAP_XKB_MOD_SHIFT = 1 << 0, // "Shift"
+   CLAP_XKB_MOD_CTRL = 1 << 1,  // "Control"
+   CLAP_XKB_MOD_ALT = 1 << 2,   // "Mod1"
+   CLAP_XKB_MOD_SUPER = 1 << 3, // "Mod4"
+};
+
+typedef struct clap_xkb_key_event {
+   // The XKB keycode, as xkbcommon uses it: on Wayland, the key from wl_keyboard.key plus 8; on
+   // X11, the keycode as is.
+   uint32_t keycode;
+
+   // The key's symbol with the current modifiers and layout, as xkb_state_key_get_one_sym()
+   // returns it, for example XKB_KEY_space. XKB_KEY_NoSymbol (0) if there is none.
+   uint32_t keysym;
+
+   // Bitmask of clap_xkb_modifier
+   uint32_t modifiers;
+
+   // One of clap_xkb_key_state
+   uint32_t state;
+} clap_xkb_key_event_t;
+
+typedef struct clap_host_gui_xkb_key_forwarding {
+   // Forwards a key which the plugin's window received while it had the keyboard focus, and
+   // which the plugin didn't consume. The plugin never forwards the keys which it consumes.
+   //
+   // event is only valid during this call.
+   // [main-thread]
+   void(CLAP_ABI *forward_key)(const clap_host_t *host, const clap_xkb_key_event_t *event);
+} clap_host_gui_xkb_key_forwarding_t;
 
 #ifdef __cplusplus
 }
