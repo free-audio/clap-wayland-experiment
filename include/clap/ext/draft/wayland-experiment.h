@@ -46,7 +46,7 @@ extern "C" {
 // xdg-foreign-unstable-v2 //
 /////////////////////////////
 
-static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XDG_FOREIGN_V2[] = "clap.gui-xdg-foreign-v2/0";
+static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XDG_FOREIGN_V2[] = "clap.gui-xdg-foreign-v2/1";
 
 /// The host exports its toplevel with zxdg_exporter_v2.export_toplevel(), and passes the handle
 /// from the zxdg_exported_v2.handle event to the plugin. The plugin imports it with
@@ -80,7 +80,7 @@ typedef struct clap_plugin_gui_xdg_foreign_v2 {
 // xdg-activation-v1 //
 ///////////////////////
 
-static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XDG_ACTIVATION_V1[] = "clap.gui-xdg-activation-v1/0";
+static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XDG_ACTIVATION_V1[] = "clap.gui-xdg-activation-v1/1";
 
 /// A Wayland client can't give the focus to its own window, or raise it: the compositor decides,
 /// and usually only when the user asked for it. When the user asks the host for the plugin's
