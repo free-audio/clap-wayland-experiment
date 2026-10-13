@@ -1,26 +1,31 @@
 #pragma once
 
+#include <clap/ext/gui.h>
 #include <clap/plugin.h>
 
 /// @page Wayland Experiment
 ///
-/// Experimental extensions for floating plugin windows on Wayland, and for the keyboard on X11
-/// and Wayland.
+/// Experimental extensions for plugin windows on Wayland, and for the keyboard on X11 and
+/// Wayland.
 ///
-/// Wayland can't embed a window from another connection, so with CLAP_WINDOW_API_WAYLAND the
-/// plugin's window is always floating. The plugin opens its own connection to the compositor and
-/// creates its own xdg_toplevel. The host and the plugin don't share any Wayland object, only
-/// strings which the compositor creates:
-/// - a bug on one side can't break the other side's connection
-/// - each side can use any Wayland library and any toolkit
+/// Wayland doesn't let a client embed a window from another client, so there are two approaches:
+/// - floating windows (CLAP_WINDOW_API_WAYLAND): the plugin's window is a toplevel of its own, on
+///   the plugin's own connection to the system compositor. It is simple for the host and for the
+///   plugin.
+/// - a nested compositor (CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1): the host runs a Wayland
+///   compositor of its own, through which the plugin's surface is embedded into the host's window.
+///   It feels more integrated, but the host has to implement a compositor.
+///
+/// A plugin may support both, and the host chooses with clap_plugin_gui->is_api_supported().
+///
+/// In both cases, the host and the plugin don't share any Wayland object or library type, only
+/// strings and sockets:
+/// - each side can use any Wayland implementation and any toolkit
 /// - the plugin's GUI may run in another process
 ///
-/// The extensions which carry a Wayland protocol are named after it, including its version:
-/// - clap_plugin_gui_xdg_foreign_v2 (xdg-foreign-unstable-v2) keeps the plugin's window above the
-///   host's window
-/// - clap_plugin_gui_xdg_activation_v1 (xdg-activation-v1) lets the plugin's window take the focus
-///
-/// A new version of a protocol would come with a new extension; a plugin may implement both.
+/// The extensions and window APIs which carry a Wayland protocol are named after it, including
+/// its version. A new version of a protocol would come with a new extension; a plugin may
+/// implement both.
 ///
 /// clap_host_gui_xkb_key_forwarding lets the plugin forward to the host the keys which its
 /// window received but didn't consume, so that the host's shortcuts keep working, for example
@@ -29,6 +34,20 @@
 ///
 /// The compositor may offer only some of the protocols, and the host and the plugin may each
 /// support only some of the extensions: they are independent.
+///
+/// A host which is an X11 client, even under XWayland, can't use the Wayland window APIs: it uses
+/// CLAP_WINDOW_API_X11 instead. The window API given to clap_plugin_gui->create() and the
+/// host's window must belong to the same window system.
+///
+/// Floating windows
+/// ----------------
+///
+/// The plugin opens its own connection to the system compositor and creates its own
+/// xdg_toplevel. A bug on one side can't break the other side's connection.
+///
+/// - clap_plugin_gui_xdg_foreign_v2 (xdg-foreign-unstable-v2) keeps the plugin's window above the
+///   host's window
+/// - clap_plugin_gui_xdg_activation_v1 (xdg-activation-v1) lets the plugin's window take the focus
 ///
 /// Showing the GUI works as follows:
 ///  1. clap_plugin_gui->is_api_supported(plugin, CLAP_WINDOW_API_WAYLAND, true)
@@ -41,9 +60,11 @@
 /// clap_plugin_gui->set_transient() isn't defined for CLAP_WINDOW_API_WAYLAND: the plugin
 /// returns false, and the host uses clap_plugin_gui_xdg_foreign_v2 instead.
 ///
-/// A host which is an X11 client, even under XWayland, can't use the xdg extensions: it uses
-/// CLAP_WINDOW_API_X11 instead. The window API given to clap_plugin_gui->create() and the
-/// host's window must belong to the same window system.
+/// Nested compositor
+/// -----------------
+///
+/// See CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1, clap_plugin_gui_wayland_nested_compositor
+/// and clap_host_gui_wayland_nested_compositor below.
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,11 +139,91 @@ typedef struct clap_plugin_gui_xdg_activation_v1 {
    void(CLAP_ABI *set_activation_token)(const clap_plugin_t *plugin, const char *token);
 } clap_plugin_gui_xdg_activation_v1_t;
 
+///////////////////////
+// Nested compositor //
+///////////////////////
+
+/// The plugin's window is embedded into the host's window, through a Wayland compositor which
+/// the host runs. That compositor forwards the requests of the plugin to the system compositor,
+/// for example with https://github.com/cclsoftware/wayland-server-delegate, and offers the
+/// surface-embedding-v1 protocol to place the plugin's surface into the host's window:
+/// https://github.com/free-audio/clap/issues/474#issuecomment-4177525720
+///
+/// The protocol is a draft too. Its interfaces are ext_surface_embedding_v1 and
+/// ext_embedded_surface_v1 for now, but the prefix may change.
+///
+/// The plugin connects to the host's compositor instead of the system compositor, with a socket
+/// which it gets from clap_host_gui_wayland_nested_compositor. Then it uses Wayland as usual:
+/// - it creates a wl_surface, and calls ext_surface_embedding_v1.get_embedded_surface() with the
+///   embedding token from clap_plugin_gui_wayland_nested_compositor->set_parent()
+/// - for its dialogs and popups, it uses the standard protocols on the same connection, with the
+///   parents from ext_embedded_surface_v1's parent_toplevel and parent_surface events
+///
+/// Showing the GUI works as follows:
+///  1. clap_plugin_gui->is_api_supported(plugin, api, false)
+///  2. clap_plugin_gui->create(plugin, api, false)
+///  3. clap_plugin_gui->can_resize(), then get_size() or set_size()
+///  4. clap_plugin_gui_wayland_nested_compositor->set_parent(plugin, token)
+///  5. clap_plugin_gui->show(plugin)
+/// where api is CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1.
+///
+/// clap_plugin_gui->set_parent() isn't defined for this window API: the plugin returns false,
+/// and the host uses clap_plugin_gui_wayland_nested_compositor instead. This keeps the experiment
+/// out of clap_plugin_gui's specification.
+///
+/// The plugin returns true from is_api_supported() only if the host has
+/// clap_host_gui_wayland_nested_compositor.
+
+// Embedding through the host's compositor, with surface-embedding-v1.
+//
+// Uses logical size, don't call clap_plugin_gui->set_scale(): the plugin gets the scale from the
+// compositor, like any Wayland client.
+static const CLAP_CONSTEXPR char CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1[] =
+   "wayland-surface-embedding-v1";
+
+// For both clap_plugin_gui_wayland_nested_compositor and clap_host_gui_wayland_nested_compositor
+static CLAP_CONSTEXPR const char CLAP_EXT_GUI_WAYLAND_NESTED_COMPOSITOR[] =
+   "clap.gui-wayland-nested-compositor/1";
+
+typedef struct clap_plugin_gui_wayland_nested_compositor {
+   // Embeds the plugin's window into the host's window, through the host's compositor.
+   //
+   // token is the embedding token for the protocol of the window API given to
+   // clap_plugin_gui->create(): with CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1, the plugin
+   // passes it to ext_surface_embedding_v1.get_embedded_surface(). It is null-terminated, and only
+   // valid during this call.
+   //
+   // The token tells the host's compositor where to embed the surface, so one connection can
+   // serve several plugin instances. If the plugin isn't connected to the host's compositor yet,
+   // it connects with clap_host_gui_wayland_nested_compositor->open_connection().
+   //
+   // Returns true on success.
+   // [main-thread & !floating]
+   bool(CLAP_ABI *set_parent)(const clap_plugin_t *plugin, const char *token);
+} clap_plugin_gui_wayland_nested_compositor_t;
+
+typedef struct clap_host_gui_wayland_nested_compositor {
+   // Opens a new connection to the host's Wayland compositor.
+   //
+   // Returns the file descriptor of a connected socket, or -1 on failure.
+   //
+   // The plugin becomes the owner of the file descriptor, and is responsible for closing it. It
+   // may connect with wl_display_connect_to_fd(), then wl_display_disconnect() closes it. It may
+   // also pass it to another process, for example in the WAYLAND_SOCKET environment variable,
+   // and close its own copy.
+   //
+   // All the connections lead to the same compositor, so a plugin may use one connection for all
+   // its instances in this host.
+   // [main-thread]
+   int(CLAP_ABI *open_connection)(const clap_host_t *host);
+} clap_host_gui_wayland_nested_compositor_t;
+
 ////////////////////////
 // XKB key forwarding //
 ////////////////////////
 
-static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XKB_KEY_FORWARDING[] = "clap.gui-xkb-key-forwarding/1";
+static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XKB_KEY_FORWARDING[] =
+   "clap.gui-xkb-key-forwarding/1";
 
 /// When the plugin's window has the keyboard focus, the window system sends the keys to the
 /// plugin only: on Wayland a client can't pass an input event to another client's window, and on
@@ -135,7 +236,9 @@ static CLAP_CONSTEXPR const char CLAP_EXT_GUI_XKB_KEY_FORWARDING[] = "clap.gui-x
 /// - a key which the plugin ignores is forwarded, and the host handles it as if it had received
 ///   it itself
 ///
-/// This is for CLAP_WINDOW_API_X11 and CLAP_WINDOW_API_WAYLAND, floating or embedded.
+/// This is for CLAP_WINDOW_API_X11, CLAP_WINDOW_API_WAYLAND and
+/// CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1, floating or embedded. A host with a nested
+/// compositor sees the keys before the plugin, but only the plugin knows which ones it consumes.
 ///
 /// The host sees the keys in pairs:
 /// - the plugin forwards the repeats and the release of a key only if it forwarded its press
