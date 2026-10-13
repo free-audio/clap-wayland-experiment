@@ -146,18 +146,21 @@ typedef struct clap_plugin_gui_xdg_activation_v1 {
 /// The plugin's window is embedded into the host's window, through a Wayland compositor which
 /// the host runs. That compositor forwards the requests of the plugin to the system compositor,
 /// for example with https://github.com/cclsoftware/wayland-server-delegate, and offers the
-/// surface-embedding-v1 protocol to place the plugin's surface into the host's window:
-/// https://github.com/free-audio/clap/issues/474#issuecomment-4177525720
+/// clap_surface_embedding_v1 protocol to place the plugin's surface into the host's window.
 ///
-/// The protocol is a draft too. Its interfaces are ext_surface_embedding_v1 and
-/// ext_embedded_surface_v1 for now, but the prefix may change.
+/// The protocol is a draft too, in protocols/clap-surface-embedding-v1.xml at the root of the
+/// clap-wayland-experiment repository. It is based on the draft which jwolffpsl proposed in
+/// https://github.com/free-audio/clap/issues/474#issuecomment-4177525720
 ///
 /// The plugin connects to the host's compositor instead of the system compositor, with a socket
 /// which it gets from clap_host_gui_wayland_nested_compositor. Then it uses Wayland as usual:
-/// - it creates a wl_surface, and calls ext_surface_embedding_v1.get_embedded_surface() with the
+/// - it creates a wl_surface, and calls clap_surface_embedding_v1.get_embedded_surface() with the
 ///   embedding token from clap_plugin_gui_wayland_nested_compositor->set_parent()
 /// - for its dialogs and popups, it uses the standard protocols on the same connection, with the
-///   parents from ext_embedded_surface_v1's parent_toplevel and parent_surface events
+///   parents from clap_embedded_surface_v1.get_parent_toplevel() and get_parent_surface()
+///
+/// The parents are xdg-shell objects, so in C the plugin includes the header which
+/// wayland-scanner generates for xdg-shell before the one for clap_surface_embedding_v1.
 ///
 /// Showing the GUI works as follows:
 ///  1. clap_plugin_gui->is_api_supported(plugin, api, false)
@@ -174,7 +177,7 @@ typedef struct clap_plugin_gui_xdg_activation_v1 {
 /// The plugin returns true from is_api_supported() only if the host has
 /// clap_host_gui_wayland_nested_compositor.
 
-// Embedding through the host's compositor, with surface-embedding-v1.
+// Embedding through the host's compositor, with clap_surface_embedding_v1.
 //
 // Uses logical size, don't call clap_plugin_gui->set_scale(): the plugin gets the scale from the
 // compositor, like any Wayland client.
@@ -190,8 +193,8 @@ typedef struct clap_plugin_gui_wayland_nested_compositor {
    //
    // token is the embedding token for the protocol of the window API given to
    // clap_plugin_gui->create(): with CLAP_WINDOW_API_WAYLAND_SURFACE_EMBEDDING_V1, the plugin
-   // passes it to ext_surface_embedding_v1.get_embedded_surface(). It is null-terminated, and only
-   // valid during this call.
+   // passes it to clap_surface_embedding_v1.get_embedded_surface(). It is null-terminated, and
+   // only valid during this call.
    //
    // The token tells the host's compositor where to embed the surface, so one connection can
    // serve several plugin instances. If the plugin isn't connected to the host's compositor yet,

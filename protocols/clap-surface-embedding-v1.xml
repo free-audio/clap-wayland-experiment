@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="clap_surface_embedding_v1">
+  <copyright>
+    Copyright (c) 2026 free-audio
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="embed a client's surface into a window of the host application">
+    This protocol lets a client embed its surface into a window of a host
+    application, which runs the compositor that the client is connected to.
+
+    For example, an audio application runs a Wayland compositor of its own,
+    which forwards the requests of its clients to the system compositor, and
+    its plugins embed their user interfaces into its windows. See the
+    clap_plugin_gui_wayland_nested_compositor extension in
+    include/clap/ext/draft/wayland-experiment.h.
+
+    The host application gives an embedding token to the client by other means
+    than this protocol, for example with the CLAP plugin API. The client
+    creates a wl_surface, and embeds it with get_embedded_surface and the
+    token.
+
+    This protocol is experimental. It is based on the ext_surface_embedding_v1
+    draft by jwolffpsl:
+    https://github.com/free-audio/clap/issues/474#issuecomment-4177525720
+  </description>
+
+  <interface name="clap_surface_embedding_v1" version="1">
+    <description summary="embed surfaces into windows of the host application">
+      The compositor of the host application exposes this global.
+    </description>
+
+    <enum name="error">
+      <entry name="role" value="0"
+             summary="the wl_surface already has another role"/>
+      <entry name="already_embedded" value="1"
+             summary="the wl_surface already has a clap_embedded_surface_v1 object"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the clap_surface_embedding_v1 object">
+        Destroys this object. The embedded surfaces which it created remain.
+      </description>
+    </request>
+
+    <request name="get_embedded_surface">
+      <description summary="embed a surface">
+        Gives the wl_surface the embedded surface role, and embeds it at the
+        place which the token designates.
+
+        The token is an opaque string, which the host application gave to the
+        client by other means. If the compositor doesn't know the token, if
+        another embedded surface already uses it, or if the compositor refuses
+        the embedding for any other reason, it sends the closed event to the new
+        object. Any client of the compositor could present a token, so the host
+        application should make its tokens hard to guess.
+
+        It is a protocol error to give a wl_surface which already has another
+        role, or which already has a clap_embedded_surface_v1 object. After its
+        clap_embedded_surface_v1 object is destroyed, the wl_surface may be
+        embedded again.
+      </description>
+      <arg name="id" type="new_id" interface="clap_embedded_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="token" type="string" summary="embedding token from the host application"/>
+    </request>
+  </interface>
+
+  <interface name="clap_embedded_surface_v1" version="1">
+    <description summary="a surface embedded into a window of the host application">
+      An embedded surface appears inside a window of the host application, at
+      the place which the host application chose. The compositor positions it;
+      the client can't.
+
+      The surface is mapped when a buffer is attached and committed, and
+      unmapped when a null buffer is committed. Its size is the size of its
+      buffer, or of its viewport, and the host application and the client agree
+      on it by other means than this protocol, for example with the CLAP plugin
+      API. The compositor may clip the surface to the area which the host
+      application reserved for it.
+
+      The compositor applies the surface's commits as soon as possible, as for a
+      desynchronized wl_subsurface. It may synchronize them with the host
+      application's own commits, for example while the area is resized, so that
+      both appear at once.
+
+      The surface receives input events like any other surface. The compositor
+      gives it the keyboard focus as it sees fit, for example when the user
+      clicks into it.
+
+      For its popups, like menus and tooltips, and for its dialogs, the client
+      uses the standard protocols on the same connection, with the parents
+      which get_parent_surface and get_parent_toplevel give.
+
+      If the wl_surface is destroyed, this object becomes inert: the compositor
+      ignores its requests, and the client should destroy it.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop embedding the surface">
+        Unmaps the surface, and destroys this object.
+      </description>
+    </request>
+
+    <request name="get_parent_surface">
+      <description summary="get the parent surface, for popups">
+        Creates an xdg_surface object which refers to the host application's
+        surface containing the embedded surface: the closest xdg_surface, a
+        toplevel or a popup, among the embedded surface's ancestors. The client
+        uses it as the parent of its popups, with xdg_surface.get_popup, and
+        places them with the position event.
+
+        The new object only stands for the host application's surface. The
+        compositor ignores all its requests except destroy, and sends no event
+        on it. The client destroys it when it doesn't need it anymore.
+      </description>
+      <arg name="id" type="new_id" interface="xdg_surface"/>
+    </request>
+
+    <request name="get_parent_toplevel">
+      <description summary="get the parent toplevel, for dialogs">
+        Creates an xdg_toplevel object which refers to the host application's
+        toplevel containing the embedded surface. The client uses it as the
+        parent of its own toplevels, for example its dialogs, with
+        xdg_toplevel.set_parent.
+
+        The new object only stands for the host application's toplevel. The
+        compositor ignores all its requests except destroy, and sends no event
+        on it. The client destroys it when it doesn't need it anymore.
+      </description>
+      <arg name="id" type="new_id" interface="xdg_toplevel"/>
+    </request>
+
+    <event name="position">
+      <description summary="position in the parent surface">
+        The position of the embedded surface's top left corner, relative to the
+        window geometry of the parent surface (see get_parent_surface), in the
+        parent's surface-local coordinates. The client needs it to place its
+        popups with xdg_positioner.
+
+        The compositor sends it right after get_embedded_surface, unless it
+        sends closed, and whenever the position changes.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </event>
+
+    <event name="closed">
+      <description summary="the embedding ended">
+        The compositor ended the embedding, or refused it: for example the
+        token was unknown or already in use, or the host application removed
+        the place which the token designated. The surface is unmapped, the
+        compositor ignores the requests on this object, and the client should
+        destroy it.
+      </description>
+    </event>
+  </interface>
+</protocol>
